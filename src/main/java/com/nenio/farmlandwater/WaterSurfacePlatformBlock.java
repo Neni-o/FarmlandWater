@@ -19,6 +19,9 @@ import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.EntityCollisionContext;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.context.BlockPlaceContext;
 
 public class WaterSurfacePlatformBlock extends Block implements SimpleWaterloggedBlock {
     public static final BooleanProperty WATERLOGGED = BlockStateProperties.WATERLOGGED;
@@ -34,6 +37,7 @@ public class WaterSurfacePlatformBlock extends Block implements SimpleWaterlogge
     public WaterSurfacePlatformBlock() {
         super(BlockBehaviour.Properties.of()
                 .noOcclusion()
+                .replaceable()
                 .strength(-1.0F, 3_600_000F) // effectively unbreakable (technical)
                 .isValidSpawn((s, l, p, e) -> false)
                 .noLootTable()
@@ -108,6 +112,17 @@ public class WaterSurfacePlatformBlock extends Block implements SimpleWaterlogge
             return withinCaptureBand && notGoingUp;
         }
         // No entity context — do not collide
+        return false;
+    }
+    /** Allow to replace platform with another block */
+    @Override
+    public boolean canBeReplaced(BlockState state, BlockPlaceContext ctx) {
+        if (ctx.isSecondaryUseActive()) return false;
+
+        ItemStack stack = ctx.getItemInHand();
+        if (stack.getItem() instanceof BlockItem) {
+            return true;
+        }
         return false;
     }
 }
