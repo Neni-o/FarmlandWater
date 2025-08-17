@@ -8,6 +8,14 @@ Farmland Water is a Minecraft Forge mod that lets players walk across water bloc
 
 This mod pairs well with my other mod [AutoSow](https://github.com/Neni-o/AutoSow).
 
+---
+## 📂​ Download 
+
+CurseForge: https://www.curseforge.com/minecraft/mc-mods/farmland-water
+
+Modrinth: https://modrinth.com/mod/farmland-water
+
+---
 ## 📜 License
 
 Released under the MIT License.
