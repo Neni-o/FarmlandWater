@@ -17,6 +17,7 @@ mandatory=true
 versionRange="${forge_version_range}"
 ordering="NONE"
 side="BOTH"
+displayTest="MATCH_VERSION"
 
 [[dependencies.${mod_id}]]
 modId="minecraft"

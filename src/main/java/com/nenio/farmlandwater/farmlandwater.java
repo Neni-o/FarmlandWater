@@ -2,17 +2,13 @@ package com.nenio.farmlandwater;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.util.Mth;
-import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.FarmBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.GameRules;
-import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.shapes.Shapes;
-import net.minecraft.world.phys.shapes.VoxelShape;
+import net.minecraft.world.level.material.Fluids;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.TickEvent;
@@ -23,16 +19,6 @@ import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
-
-/**
- * FarmlandWater: allow walking on WATER blocks that touch at least one FARMLAND (horizontal only),
- * provided there is AIR above the water. Toggle with /gamerule FarmlandWater <true|false>.
- * For smooth feel, when a player is above eligible water mod temporarily disable gravity and
- * pin their Y to the water surface (no bouncing), restoring gravity when they step off.
- */
 @Mod(farmlandwater.MOD_ID)
 public class farmlandwater {
     public static final String MOD_ID = "farmlandwater";
@@ -40,173 +26,190 @@ public class farmlandwater {
     // /gamerule FarmlandWater <true|false>
     public static GameRules.Key<GameRules.BooleanValue> GR_FARMLAND_WATER;
 
-    // Four horizontal directions only
+    // 4 cardinal directions
     private static final Direction[] CARDINALS = new Direction[]{
             Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST
     };
 
-    // Track which players currently have gravity disabled by mod
-    private static final Map<UUID, Boolean> NO_GRAVITY_STATE = new HashMap<>();
-    // Persistent flag on Player to know if mod disabled gravity (survives relog/world load)
-    private static final String NBT_NO_GRAV_KEY = "FarmlandWater_NoGrav";
+    // Player-local scan
+    private static final int SCAN_RADIUS = 8;     // in blocks (x/z)
+    private static final int SCAN_Y_RANGE = 6;    // +/- from surface
+    private static final int SCAN_EVERY_TICKS = 10;
 
     public farmlandwater() {
         IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
+        ModBlocks.BLOCKS.register(modBus);
         modBus.addListener(this::onCommonSetup);
+
         MinecraftForge.EVENT_BUS.register(this);
     }
 
-    /** Register the gamerule during common setup (vanilla API). */
     private void onCommonSetup(FMLCommonSetupEvent event) {
         event.enqueueWork(() -> GR_FARMLAND_WATER = GameRules.register(
-                "FarmlandWater",
-                GameRules.Category.PLAYER,
-                GameRules.BooleanValue.create(true)
+                "FarmlandWater", GameRules.Category.PLAYER, GameRules.BooleanValue.create(true)
         ));
     }
 
-    // --------------------------------------------------------------------------------------------
-    // Shape hook via reflection on BlockEvent subclasses (collision + support)
-    // --------------------------------------------------------------------------------------------
-
-    @SubscribeEvent
-    public void onAnyBlockEvent(BlockEvent event) {
-        // Only proceed for BlockEvent subclasses that actually expose a shape setter
-        boolean hasSetShape = hasMethod(event, "setShape", VoxelShape.class) || hasMethod(event, "setNewShape", VoxelShape.class);
-        if (!hasSetShape) return;
-
-        BlockState state = event.getState();
-        if (state.getBlock() != Blocks.WATER) return;
-
-        BlockGetter level = event.getLevel();
-        if (!isFeatureEnabled(level)) return;
-
-        BlockPos pos = event.getPos();
-        if (!canWalkOnThisWater(level, pos)) return;
-
-        VoxelShape solid = Shapes.block();
-        if (!invokeShapeSetter(event, "setShape", solid)) {
-            invokeShapeSetter(event, "setNewShape", solid);
-        }
-    }
-
-    private static boolean hasMethod(Object obj, String name, Class<?>... params) {
-        try {
-            obj.getClass().getMethod(name, params);
-            return true;
-        } catch (NoSuchMethodException e) {
-            return false;
-        }
-    }
-
-    private static boolean invokeShapeSetter(Object event, String method, VoxelShape shape) {
-        try {
-            event.getClass().getMethod(method, VoxelShape.class).invoke(event, shape);
-            return true;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    // --------------------------------------------------------------------------------------------
-    // Helper to toggle gravity in a way we can detect later (uses persistent player NBT)
-    // --------------------------------------------------------------------------------------------
-
-    private static void setModNoGravity(Player player, boolean enable) {
-        player.setNoGravity(enable);
-        if (enable) {
-            NO_GRAVITY_STATE.put(player.getUUID(), true);
-        } else {
-            NO_GRAVITY_STATE.remove(player.getUUID());
-        }
-        player.getPersistentData().putBoolean(NBT_NO_GRAV_KEY, enable);
-    }
-
-    // --------------------------------------------------------------------------------------------
-    // Player-tick fallback (client + server): no-gravity over eligible water, smooth Y lock
-    // --------------------------------------------------------------------------------------------
-
+    // =====================================================================
+    // 1) LIGHT SCAN AROUND THE PLAYER — both for placing (rule ON) and cleaning (rule OFF)
+    // =====================================================================
     @SubscribeEvent
     public void onPlayerTick(TickEvent.PlayerTickEvent event) {
-        Player player = event.player;
+        if (event.phase != TickEvent.Phase.END) return;
+        var player = event.player;
         Level level = player.level();
+        if (level.isClientSide) return;
 
-        // Determine candidate water beneath or at feet
-        BlockPos feet = new BlockPos(Mth.floor(player.getX()), Mth.floor(player.getY()), Mth.floor(player.getZ()));
-        BlockPos below = feet.below();
-        boolean feetWater  = level.getBlockState(feet).is(Blocks.WATER);
-        boolean belowWater = level.getBlockState(below).is(Blocks.WATER);
+        final boolean enabled = isFeatureEnabled(level);
 
-        boolean allow = isFeatureEnabled(level);
-        boolean walkFeet  = allow && feetWater  && canWalkOnThisWater(level, feet);
-        boolean walkBelow = allow && belowWater && canWalkOnThisWater(level, below);
+        // run every N ticks per player
+        if ((player.tickCount % SCAN_EVERY_TICKS) != 0) return;
 
-        BlockPos waterPos = walkFeet ? feet : (walkBelow ? below : null);
-        boolean shouldFloat = waterPos != null;
+        final int px = (int)Math.floor(player.getX());
+        final int pz = (int)Math.floor(player.getZ());
 
-        boolean wasNoGrav = NO_GRAVITY_STATE.getOrDefault(player.getUUID(), false);
-        boolean tagNoGrav = player.getPersistentData().getBoolean(NBT_NO_GRAV_KEY);
+        // approximate surface via heightmap — limit Y scan range
+        int topY = level.getHeight(Heightmap.Types.WORLD_SURFACE, px, pz);
+        int yMin = Math.max(level.getMinBuildHeight(), topY - SCAN_Y_RANGE);
+        int yMax = Math.min(level.getMaxBuildHeight()-1, topY + SCAN_Y_RANGE);
 
-        // Safety: if gamerule is OFF, always restore gravity we might have disabled before
-        if (!allow) {
-            if (wasNoGrav || tagNoGrav) setModNoGravity(player, false);
-            return;
-        }
+        for (int x = px - SCAN_RADIUS; x <= px + SCAN_RADIUS; x++) {
+            for (int z = pz - SCAN_RADIUS; z <= pz + SCAN_RADIUS; z++) {
+                // check a few layers around the surface (terraces, small height differences)
+                for (int y = yMax; y >= yMin; y--) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState st = level.getBlockState(pos);
 
-        if (shouldFloat) {
-            // Enable no-gravity while above eligible water (idempotent via NBT)
-            if (!tagNoGrav) setModNoGravity(player, true);
-
-            double targetY = waterPos.getY() + 1.0; // water surface
-            if (Math.abs(player.getY() - targetY) > 1.0E-3) {
-                player.setPos(player.getX(), targetY, player.getZ());
+                    if (enabled) {
+                        // Normal behavior: arm adjacent water around farmland; clean orphan platforms.
+                        if (st.getBlock() instanceof FarmBlock) {
+                            placePlatformsAroundFarmland(level, pos);
+                        } else if (st.is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
+                            if (!hasAdjacentFarmland(level, pos)) {
+                                level.setBlock(pos, Blocks.WATER.defaultBlockState(), 2);
+                            }
+                        }
+                    } else {
+                        // CLEAN-UP MODE: rule is OFF → turn any platform back into water.
+                        if (st.is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
+                            level.setBlock(pos, Blocks.WATER.defaultBlockState(), 2);
+                        }
+                    }
+                }
             }
-            Vec3 v = player.getDeltaMovement();
-            player.setDeltaMovement(v.x, 0.0, v.z);
-            player.setSwimming(false);
-            player.fallDistance = 0.0F;
-        } else {
-            // Not over eligible water → if our mod had disabled gravity earlier, restore it now
-            if (tagNoGrav) setModNoGravity(player, false);
         }
     }
 
-    // --------------------------------------------------------------------------------------------
-    // Walkability logic
-    // --------------------------------------------------------------------------------------------
+    // =====================================================================
+    // 2) FARMLAND broken → always revert nearby platforms (even if rule is OFF)
+    // =====================================================================
+    @SubscribeEvent
+    public void onFarmlandBreak(BlockEvent.BreakEvent event) {
+        if (!(event.getLevel() instanceof Level level)) return;
+        if (level.isClientSide) return;
 
-    /**
-     * Eligible if: this is WATER, there is AIR above, and at least one horizontal neighbor is FARMLAND.
-     */
-    public static boolean canWalkOnThisWater(BlockGetter level, BlockPos waterPos) {
-        BlockState self = level.getBlockState(waterPos);
-        if (self.getBlock() != Blocks.WATER) return false;
-        if (!level.getBlockState(waterPos.above()).isAir()) return false; // need air above
+        if (event.getState().getBlock() instanceof FarmBlock) {
+            revertPlatformsAround(level, event.getPos());
+        }
+    }
 
+    // =====================================================================
+    // 3) WATER appears as the SECOND block (bucket / flow) → convert immediately (only when rule ON)
+    // =====================================================================
+    @SubscribeEvent
+    public void onWaterPlacedByEntity(BlockEvent.EntityPlaceEvent event) {
+        if (!(event.getLevel() instanceof Level level)) return;
+        if (level.isClientSide) return;
+        if (!isFeatureEnabled(level)) return; // do not place platforms when disabled
+
+        BlockPos pos = event.getPos();
+        BlockState placed = event.getPlacedBlock();
+
+        // if this is water (source/flowing) and not already our platform
+        if ((level.getFluidState(pos).is(Fluids.WATER) || placed.getFluidState().is(Fluids.WATER))
+                && !level.getBlockState(pos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
+            maybeConvertWaterToPlatform(level, pos);
+        }
+    }
+
+    @SubscribeEvent
+    public void onFluidPlaced(BlockEvent.FluidPlaceBlockEvent event) {
+        if (!(event.getLevel() instanceof Level level)) return;
+        if (level.isClientSide) return;
+        if (!isFeatureEnabled(level)) return; // do not place platforms when disabled
+
+        BlockPos pos = event.getPos();
+        BlockState newState = event.getNewState();
+
+        // loop guard: if already platform, skip
+        if (level.getBlockState(pos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) return;
+
+        if (level.getFluidState(pos).is(Fluids.WATER) || newState.getFluidState().is(Fluids.WATER)) {
+            maybeConvertWaterToPlatform(level, pos);
+        }
+    }
+
+    // =====================================================================
+    // Helpers
+    // =====================================================================
+
+    /** Place platforms in 4 directions ONLY where water is present. */
+    private static void placePlatformsAroundFarmland(Level level, BlockPos farmlandPos) {
         for (Direction dir : CARDINALS) {
-            BlockPos nPos = waterPos.relative(dir);
-            if (isFarmland(level.getBlockState(nPos))) {
-                return true;
+            BlockPos wpos = farmlandPos.relative(dir);
+            // if this cell contains water → replace with platform
+            if (level.getFluidState(wpos).is(Fluids.WATER)) {
+                if (!level.getBlockState(wpos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
+                    BlockState platform = ModBlocks.WATER_SURFACE_PLATFORM.get()
+                            .defaultBlockState()
+                            .setValue(WaterSurfacePlatformBlock.WATERLOGGED, true);
+                    level.setBlock(wpos, platform, 2); // 2: send to client, minimal neighbor updates
+                }
+            } else {
+                // if a platform is present and there's no adjacent farmland anymore → restore water
+                if (level.getBlockState(wpos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())
+                        && !hasAdjacentFarmland(level, wpos)) {
+                    level.setBlock(wpos, Blocks.WATER.defaultBlockState(), 2);
+                }
             }
+        }
+    }
+
+    /** When FARMLAND disappears — adjacent platforms revert to water (if no other adjacent FARMLAND). */
+    private static void revertPlatformsAround(Level level, BlockPos oldFarmland) {
+        for (Direction dir : CARDINALS) {
+            BlockPos pos = oldFarmland.relative(dir);
+            if (level.getBlockState(pos).is(ModBlocks.WATER_SURFACE_PLATFORM.get()) && !hasAdjacentFarmland(level, pos)) {
+                level.setBlock(pos, Blocks.WATER.defaultBlockState(), 2);
+            }
+        }
+    }
+
+    /** If the block at `pos` is water and there is adjacent FARMLAND → convert that water to a platform. */
+    private static void maybeConvertWaterToPlatform(Level level, BlockPos pos) {
+        if (!level.getFluidState(pos).is(Fluids.WATER)) return;
+        if (!hasAdjacentFarmland(level, pos)) return;
+
+        BlockState platform = ModBlocks.WATER_SURFACE_PLATFORM.get()
+                .defaultBlockState()
+                .setValue(WaterSurfacePlatformBlock.WATERLOGGED, true);
+        level.setBlock(pos, platform, 2);
+    }
+
+    /** Checks for horizontally adjacent FARMLAND (N/S/W/E). */
+    private static boolean hasAdjacentFarmland(Level level, BlockPos pos) {
+        for (Direction d : CARDINALS) {
+            if (level.getBlockState(pos.relative(d)).getBlock() instanceof FarmBlock) return true;
         }
         return false;
     }
 
-    /** Helper: farmland detection compatible with variants. */
-    private static boolean isFarmland(BlockState state) {
-        return state.getBlock() instanceof FarmBlock || state.is(Blocks.FARMLAND);
-    }
-
-    /** Read the gamerule if available; default to true if not queryable on this side. */
-    private static boolean isFeatureEnabled(BlockGetter level) {
-        if (level instanceof Level lvl) {
-            try {
-                GameRules rules = lvl.getGameRules();
-                if (rules != null && GR_FARMLAND_WATER != null) {
-                    return rules.getBoolean(GR_FARMLAND_WATER);
-                }
-            } catch (Throwable ignored) { }
-        }
-        return true; // Fallback: enabled; server authoritative logic still applies
+    /** /gamerule FarmlandWater */
+    private static boolean isFeatureEnabled(Level level) {
+        try {
+            GameRules rules = level.getGameRules();
+            return rules != null && GR_FARMLAND_WATER != null ? rules.getBoolean(GR_FARMLAND_WATER) : true;
+        } catch (Throwable ignored) { }
+        return true;
     }
 }
