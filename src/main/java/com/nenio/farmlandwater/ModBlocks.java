@@ -1,16 +1,13 @@
 package com.nenio.farmlandwater;
 
-import net.minecraft.world.level.block.Block;
-import net.minecraftforge.registries.DeferredRegister;
-import net.minecraftforge.registries.ForgeRegistries;
-import net.minecraftforge.registries.RegistryObject;
+import net.neoforged.neoforge.registries.DeferredBlock;
+import net.neoforged.neoforge.registries.DeferredRegister;
 
-public class ModBlocks {
-    public static final DeferredRegister<Block> BLOCKS =
-            DeferredRegister.create(ForgeRegistries.BLOCKS, farmlandwater.MOD_ID);
+public final class ModBlocks {
+    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks(farmlandwater.MOD_ID);
 
-    public static final RegistryObject<Block> WATER_SURFACE_PLATFORM =
+    public static final DeferredBlock<WaterSurfacePlatformBlock> WATER_SURFACE_PLATFORM =
             BLOCKS.register("water_surface_platform", WaterSurfacePlatformBlock::new);
 
-    private ModBlocks() {} // util
+    private ModBlocks() {}
 }

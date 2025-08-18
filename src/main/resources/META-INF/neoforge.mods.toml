@@ -1,0 +1,17 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="MIT"
+
+[[mods]]
+modId="farmlandwater"
+version="2.0.0"
+displayName="Farmland Water"
+authors="Neni-o"
+description='''
+Walk on water blocks adjacent to farmland to move around faster without trampling farmland. Toggle with /gamerule FarmlandWater
+'''
+
+[mods.features]
+java_version="[21,)"
+
+displayTest="MATCH_VERSION"

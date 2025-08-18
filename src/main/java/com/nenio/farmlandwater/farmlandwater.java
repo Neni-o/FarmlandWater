@@ -10,14 +10,13 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.levelgen.Heightmap;
 
-import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.level.BlockEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
-import net.minecraftforge.eventbus.api.IEventBus;
-import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.level.BlockEvent;
+import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 
 @Mod(farmlandwater.MOD_ID)
 public class farmlandwater {
@@ -36,12 +35,12 @@ public class farmlandwater {
     private static final int SCAN_Y_RANGE = 6;    // +/- from surface
     private static final int SCAN_EVERY_TICKS = 10;
 
-    public farmlandwater(FMLJavaModLoadingContext context) {
-        IEventBus modBus = context.getModEventBus();
-        ModBlocks.BLOCKS.register(modBus);
-        modBus.addListener(this::onCommonSetup);
+    // mod-bus
+    public farmlandwater(IEventBus modBus) {
+        ModBlocks.BLOCKS.register(modBus);              // rejestry moda
+        modBus.addListener(this::onCommonSetup);        // eventy lifecycle (mod-bus)
 
-        MinecraftForge.EVENT_BUS.register(this);
+        NeoForge.EVENT_BUS.register(this);              // eventy gry (game-bus)
     }
 
     private void onCommonSetup(FMLCommonSetupEvent event) {
@@ -54,34 +53,29 @@ public class farmlandwater {
     // 1) LIGHT SCAN AROUND THE PLAYER — both for placing (rule ON) and cleaning (rule OFF)
     // =====================================================================
     @SubscribeEvent
-    public void onPlayerTick(TickEvent.PlayerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
-        var player = event.player;
+    public void onPlayerTick(PlayerTickEvent.Post event) {
+        var player = event.getEntity();
         Level level = player.level();
         if (level.isClientSide) return;
 
         final boolean enabled = isFeatureEnabled(level);
 
-        // run every N ticks per player
         if ((player.tickCount % SCAN_EVERY_TICKS) != 0) return;
 
         final int px = (int)Math.floor(player.getX());
         final int pz = (int)Math.floor(player.getZ());
 
-        // approximate surface via heightmap — limit Y scan range
         int topY = level.getHeight(Heightmap.Types.WORLD_SURFACE, px, pz);
         int yMin = Math.max(level.getMinBuildHeight(), topY - SCAN_Y_RANGE);
         int yMax = Math.min(level.getMaxBuildHeight()-1, topY + SCAN_Y_RANGE);
 
         for (int x = px - SCAN_RADIUS; x <= px + SCAN_RADIUS; x++) {
             for (int z = pz - SCAN_RADIUS; z <= pz + SCAN_RADIUS; z++) {
-                // check a few layers around the surface (terraces, small height differences)
                 for (int y = yMax; y >= yMin; y--) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockState st = level.getBlockState(pos);
 
                     if (enabled) {
-                        // Normal behavior: arm adjacent water around farmland; clean orphan platforms.
                         if (st.getBlock() instanceof FarmBlock) {
                             placePlatformsAroundFarmland(level, pos);
                         } else if (st.is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
@@ -90,7 +84,6 @@ public class farmlandwater {
                             }
                         }
                     } else {
-                        // CLEAN-UP MODE: rule is OFF → turn any platform back into water.
                         if (st.is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
                             level.setBlock(pos, Blocks.WATER.defaultBlockState(), 2);
                         }
@@ -120,12 +113,11 @@ public class farmlandwater {
     public void onWaterPlacedByEntity(BlockEvent.EntityPlaceEvent event) {
         if (!(event.getLevel() instanceof Level level)) return;
         if (level.isClientSide) return;
-        if (!isFeatureEnabled(level)) return; // do not place platforms when disabled
+        if (!isFeatureEnabled(level)) return;
 
         BlockPos pos = event.getPos();
         BlockState placed = event.getPlacedBlock();
 
-        // if this is water (source/flowing) and not already our platform
         if ((level.getFluidState(pos).is(Fluids.WATER) || placed.getFluidState().is(Fluids.WATER))
                 && !level.getBlockState(pos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
             maybeConvertWaterToPlatform(level, pos);
@@ -136,12 +128,11 @@ public class farmlandwater {
     public void onFluidPlaced(BlockEvent.FluidPlaceBlockEvent event) {
         if (!(event.getLevel() instanceof Level level)) return;
         if (level.isClientSide) return;
-        if (!isFeatureEnabled(level)) return; // do not place platforms when disabled
+        if (!isFeatureEnabled(level)) return;
 
         BlockPos pos = event.getPos();
         BlockState newState = event.getNewState();
 
-        // loop guard: if already platform, skip
         if (level.getBlockState(pos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) return;
 
         if (level.getFluidState(pos).is(Fluids.WATER) || newState.getFluidState().is(Fluids.WATER)) {
@@ -153,29 +144,24 @@ public class farmlandwater {
     // Helpers
     // =====================================================================
 
-    /** Place platforms in 4 directions ONLY where water is present. */
     private static void placePlatformsAroundFarmland(Level level, BlockPos farmlandPos) {
         for (Direction dir : CARDINALS) {
             BlockPos wpos = farmlandPos.relative(dir);
-            // if this cell contains water → replace with platform
             if (level.getFluidState(wpos).is(Fluids.WATER)) {
                 if (!level.getBlockState(wpos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
                     BlockState platform = ModBlocks.WATER_SURFACE_PLATFORM.get()
                             .defaultBlockState()
                             .setValue(WaterSurfacePlatformBlock.WATERLOGGED, true);
-                    level.setBlock(wpos, platform, 2); // 2: send to client, minimal neighbor updates
+                    level.setBlock(wpos, platform, 2);
                 }
             } else {
-                // if a platform is present and there's no adjacent farmland anymore → restore water
-                if (level.getBlockState(wpos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())
-                        && !hasAdjacentFarmland(level, wpos)) {
-                    level.setBlock(wpos, Blocks.WATER.defaultBlockState(), 2);
+                if (level.getBlockState(wpos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
+                    level.setBlock(wpos, Blocks.AIR.defaultBlockState(), 2);
                 }
             }
         }
     }
 
-    /** When FARMLAND disappears — adjacent platforms revert to water (if no other adjacent FARMLAND). */
     private static void revertPlatformsAround(Level level, BlockPos oldFarmland) {
         for (Direction dir : CARDINALS) {
             BlockPos pos = oldFarmland.relative(dir);
@@ -185,7 +171,6 @@ public class farmlandwater {
         }
     }
 
-    /** If the block at `pos` is water and there is adjacent FARMLAND → convert that water to a platform. */
     private static void maybeConvertWaterToPlatform(Level level, BlockPos pos) {
         if (!level.getFluidState(pos).is(Fluids.WATER)) return;
         if (!hasAdjacentFarmland(level, pos)) return;
@@ -196,7 +181,6 @@ public class farmlandwater {
         level.setBlock(pos, platform, 2);
     }
 
-    /** Checks for horizontally adjacent FARMLAND (N/S/W/E). */
     private static boolean hasAdjacentFarmland(Level level, BlockPos pos) {
         for (Direction d : CARDINALS) {
             if (level.getBlockState(pos.relative(d)).getBlock() instanceof FarmBlock) return true;
@@ -204,7 +188,6 @@ public class farmlandwater {
         return false;
     }
 
-    /** /gamerule FarmlandWater */
     private static boolean isFeatureEnabled(Level level) {
         try {
             GameRules rules = level.getGameRules();
