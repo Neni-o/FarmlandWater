@@ -9,5 +9,5 @@ neoForge {
         client { client() }
         server { server() }
     }
-    mods { autosow { sourceSet sourceSets.main } }
+    mods { farmlandwater { sourceSet sourceSets.main } }
 }
