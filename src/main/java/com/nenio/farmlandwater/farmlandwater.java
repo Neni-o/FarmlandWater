@@ -34,12 +34,11 @@ public class farmlandwater {
     private static final int SCAN_Y_RANGE = 6;
     private static final int SCAN_EVERY_TICKS = 10;
 
-    public farmlandwater() {
-        IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
+    public farmlandwater(FMLJavaModLoadingContext context) {
+        IEventBus modBus = context.getModEventBus();
         ModBlocks.BLOCKS.register(modBus);
         modBus.addListener(this::onCommonSetup);
 
-        // rejestracja na głównym busie Forge (zamiast NeoForge.EVENT_BUS)
         MinecraftForge.EVENT_BUS.register(this);
     }
 
