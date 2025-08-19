@@ -3,7 +3,6 @@ package com.nenio.farmlandwater;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.Block;
@@ -28,8 +27,6 @@ import net.minecraft.world.phys.shapes.EntityCollisionContext;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
-import org.jetbrains.annotations.Nullable;
-
 import java.util.Optional;
 
 /**
@@ -48,52 +45,41 @@ public class WaterSurfacePlatformBlock extends Block implements SimpleWaterlogge
     private static final double CAPTURE_TOLERANCE = 0.125;
     private static final double UPWARD_EPS = 0.001; // treat as “going up” if > this
 
-    public WaterSurfacePlatformBlock() {
-        super(BlockBehaviour.Properties.of()
-                .noOcclusion()
-                .replaceable()
-                .strength(-1.0F, 3_600_000F) // effectively unbreakable (technical block)
-                .isValidSpawn((s, l, p, e) -> false)
-                .noLootTable()
-        );
+    // Properties come from registry (with setId applied there)
+    public WaterSurfacePlatformBlock(BlockBehaviour.Properties props) {
+        super(props);
         this.registerDefaultState(this.stateDefinition.any().setValue(WATERLOGGED, true));
     }
 
-    @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> b) {
         b.add(WATERLOGGED);
     }
 
-    @Override
     public RenderShape getRenderShape(BlockState state) {
         return RenderShape.INVISIBLE; // invisible; the water renders instead
     }
 
     // --- Collision only from above / near-top band AND only if there is water ---
-    @Override
     public VoxelShape getCollisionShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext ctx) {
         if (!state.getValue(WATERLOGGED)) return Shapes.empty();
         return collidesFromTopOrNearTop(ctx, pos) ? TOP_PLATE : Shapes.empty();
     }
 
     // Support shape for standing/walking — also only while waterlogged
-    @Override
     public VoxelShape getBlockSupportShape(BlockState state, BlockGetter level, BlockPos pos) {
         return state.getValue(WATERLOGGED) ? TOP_PLATE : Shapes.empty();
     }
 
     // No outline/visual shape; water raytracing is preferred
-    @Override public VoxelShape getShape(BlockState s, BlockGetter l, BlockPos p, CollisionContext c) { return Shapes.empty(); }
-    @Override public VoxelShape getVisualShape(BlockState s, BlockGetter l, BlockPos p, CollisionContext c) { return Shapes.empty(); }
+    public VoxelShape getShape(BlockState s, BlockGetter l, BlockPos p, CollisionContext c) { return Shapes.empty(); }
+    public VoxelShape getVisualShape(BlockState s, BlockGetter l, BlockPos p, CollisionContext c) { return Shapes.empty(); }
 
     // Keep actual water in this cell while waterlogged
-    @Override
     public FluidState getFluidState(BlockState state) {
         return state.getValue(WATERLOGGED) ? Fluids.WATER.getSource(false) : super.getFluidState(state);
     }
 
     // If waterlogging is lost, remove the block to avoid “ghost” collision
-    @Override
     public BlockState updateShape(BlockState state, Direction dir, BlockState nd, LevelAccessor level, BlockPos pos, BlockPos nPos) {
         if (state.getValue(WATERLOGGED)) {
             level.scheduleTick(pos, Fluids.WATER, Fluids.WATER.getTickDelay(level));
@@ -102,19 +88,16 @@ public class WaterSurfacePlatformBlock extends Block implements SimpleWaterlogge
         return Blocks.AIR.defaultBlockState();
     }
 
-    @Override
+    // Mapping quirk in 21.2.1-beta — leave without @Override
     public boolean propagatesSkylightDown(BlockState state, BlockGetter level, BlockPos pos) {
         return true;
     }
 
     // ========= BucketPickup =========
+    // Leave without @Override to be mapping-agnostic in 21.2.1-beta.
 
-    /**
-     * NeoForge 1.21 signature: the first parameter is the (nullable) player using the bucket.
-     * Removing the water also removes the platform to prevent lingering hitboxes.
-     */
-    @Override
-    public ItemStack pickupBlock(@Nullable Player player, LevelAccessor level, BlockPos pos, BlockState state) {
+    /** NeoForge/Mojmap 1.21.x commonly exposes this signature (no Player parameter). */
+    public ItemStack pickupBlock(LevelAccessor level, BlockPos pos, BlockState state) {
         if (state.getValue(WATERLOGGED)) {
             level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
             return new ItemStack(Items.WATER_BUCKET);
@@ -122,11 +105,8 @@ public class WaterSurfacePlatformBlock extends Block implements SimpleWaterlogge
         return ItemStack.EMPTY;
     }
 
-    /**
-     * Preferred override in 1.21 via IBucketPickupExtension: state-sensitive pickup sound.
-     */
-    @Override
-    public Optional<SoundEvent> getPickupSound(BlockState state) {
+    /** Mojmap 1.21.x: no-arg sound getter */
+    public Optional<SoundEvent> getPickupSound() {
         return Fluids.WATER.getPickupSound();
     }
 
@@ -156,7 +136,6 @@ public class WaterSurfacePlatformBlock extends Block implements SimpleWaterlogge
     }
 
     /** Allow replacing the platform with another block placed by hand (no sneak = replace). */
-    @Override
     public boolean canBeReplaced(BlockState state, BlockPlaceContext ctx) {
         if (ctx.isSecondaryUseActive()) return false; // sneaking keeps the block
         ItemStack stack = ctx.getItemInHand();

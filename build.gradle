@@ -4,7 +4,7 @@ plugins {
 }
 
 neoForge {
-    version = "21.0.167"
+    version = "21.2.1-beta"
     runs {
         client { client() }
         server { server() }

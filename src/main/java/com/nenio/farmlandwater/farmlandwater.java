@@ -2,6 +2,7 @@ package com.nenio.farmlandwater;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
@@ -22,25 +23,20 @@ import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 public class farmlandwater {
     public static final String MOD_ID = "farmlandwater";
 
-    // /gamerule FarmlandWater <true|false>
     public static GameRules.Key<GameRules.BooleanValue> GR_FARMLAND_WATER;
 
-    // 4 cardinal directions
     private static final Direction[] CARDINALS = new Direction[]{
             Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST
     };
 
-    // Player-local scan
-    private static final int SCAN_RADIUS = 8;     // in blocks (x/z)
-    private static final int SCAN_Y_RANGE = 6;    // +/- from surface
+    private static final int SCAN_RADIUS = 8;
+    private static final int SCAN_Y_RANGE = 6;
     private static final int SCAN_EVERY_TICKS = 10;
 
-    // mod-bus
     public farmlandwater(IEventBus modBus) {
-        ModBlocks.BLOCKS.register(modBus);              // rejestry moda
-        modBus.addListener(this::onCommonSetup);        // eventy lifecycle (mod-bus)
-
-        NeoForge.EVENT_BUS.register(this);              // eventy gry (game-bus)
+        ModBlocks.BLOCKS.register(modBus);
+        modBus.addListener(this::onCommonSetup);
+        NeoForge.EVENT_BUS.register(this);
     }
 
     private void onCommonSetup(FMLCommonSetupEvent event) {
@@ -49,9 +45,6 @@ public class farmlandwater {
         ));
     }
 
-    // =====================================================================
-    // 1) LIGHT SCAN AROUND THE PLAYER — both for placing (rule ON) and cleaning (rule OFF)
-    // =====================================================================
     @SubscribeEvent
     public void onPlayerTick(PlayerTickEvent.Post event) {
         var player = event.getEntity();
@@ -59,15 +52,17 @@ public class farmlandwater {
         if (level.isClientSide) return;
 
         final boolean enabled = isFeatureEnabled(level);
-
         if ((player.tickCount % SCAN_EVERY_TICKS) != 0) return;
 
-        final int px = (int)Math.floor(player.getX());
-        final int pz = (int)Math.floor(player.getZ());
+        final int px = (int) Math.floor(player.getX());
+        final int pz = (int) Math.floor(player.getZ());
 
         int topY = level.getHeight(Heightmap.Types.WORLD_SURFACE, px, pz);
-        int yMin = Math.max(level.getMinBuildHeight(), topY - SCAN_Y_RANGE);
-        int yMax = Math.min(level.getMaxBuildHeight()-1, topY + SCAN_Y_RANGE);
+        final int worldMinY = level.dimensionType().minY();
+        final int worldMaxY = worldMinY + level.dimensionType().height() - 1;
+
+        int yMin = Math.max(worldMinY, topY - SCAN_Y_RANGE);
+        int yMax = Math.min(worldMaxY, topY + SCAN_Y_RANGE);
 
         for (int x = px - SCAN_RADIUS; x <= px + SCAN_RADIUS; x++) {
             for (int z = pz - SCAN_RADIUS; z <= pz + SCAN_RADIUS; z++) {
@@ -93,9 +88,6 @@ public class farmlandwater {
         }
     }
 
-    // =====================================================================
-    // 2) FARMLAND broken → always revert nearby platforms (even if rule is OFF)
-    // =====================================================================
     @SubscribeEvent
     public void onFarmlandBreak(BlockEvent.BreakEvent event) {
         if (!(event.getLevel() instanceof Level level)) return;
@@ -106,9 +98,6 @@ public class farmlandwater {
         }
     }
 
-    // =====================================================================
-    // 3) WATER appears as the SECOND block (bucket / flow) → convert immediately (only when rule ON)
-    // =====================================================================
     @SubscribeEvent
     public void onWaterPlacedByEntity(BlockEvent.EntityPlaceEvent event) {
         if (!(event.getLevel() instanceof Level level)) return;
@@ -139,10 +128,6 @@ public class farmlandwater {
             maybeConvertWaterToPlatform(level, pos);
         }
     }
-
-    // =====================================================================
-    // Helpers
-    // =====================================================================
 
     private static void placePlatformsAroundFarmland(Level level, BlockPos farmlandPos) {
         for (Direction dir : CARDINALS) {
@@ -190,8 +175,10 @@ public class farmlandwater {
 
     private static boolean isFeatureEnabled(Level level) {
         try {
-            GameRules rules = level.getGameRules();
-            return rules != null && GR_FARMLAND_WATER != null ? rules.getBoolean(GR_FARMLAND_WATER) : true;
+            if (level instanceof ServerLevel serverLevel) {
+                GameRules rules = serverLevel.getGameRules();
+                return GR_FARMLAND_WATER != null ? rules.getBoolean(GR_FARMLAND_WATER) : true;
+            }
         } catch (Throwable ignored) { }
         return true;
     }
