@@ -11,39 +11,39 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.levelgen.Heightmap;
 
-import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.level.BlockEvent;
-import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
-import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 
 @Mod(farmlandwater.MOD_ID)
 public class farmlandwater {
     public static final String MOD_ID = "farmlandwater";
 
+    // GameRule key; set during common setup
     public static GameRules.Key<GameRules.BooleanValue> GR_FARMLAND_WATER;
 
     private static final Direction[] CARDINALS = new Direction[]{
             Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST
     };
 
+    // Scan settings around the player
     private static final int SCAN_RADIUS = 8;
     private static final int SCAN_Y_RANGE = 6;
     private static final int SCAN_EVERY_TICKS = 10;
 
-    public farmlandwater() {
-        IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
+    public farmlandwater(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext context) {
+        var modBus = context.getModEventBus();
         ModBlocks.BLOCKS.register(modBus);
+        // Register GameRule during common setup
         modBus.addListener(this::onCommonSetup);
-
-        // rejestracja na głównym busie Forge (zamiast NeoForge.EVENT_BUS)
-        MinecraftForge.EVENT_BUS.register(this);
+        // Subscribe this class to the main Forge event bus
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(this);
     }
 
     private void onCommonSetup(FMLCommonSetupEvent event) {
+        // Register the gamerule (default: true)
         event.enqueueWork(() -> GR_FARMLAND_WATER = GameRules.register(
                 "FarmlandWater", GameRules.Category.PLAYER, GameRules.BooleanValue.create(true)
         ));
@@ -51,7 +51,6 @@ public class farmlandwater {
 
     @SubscribeEvent
     public void onPlayerTick(TickEvent.PlayerTickEvent event) {
-        // W Forge używamy faz zamiast klas Pre/Post — END ≈ Post
         if (event.phase != TickEvent.Phase.END) return;
 
         var player = event.player;
@@ -71,6 +70,7 @@ public class farmlandwater {
         int yMin = Math.max(worldMinY, topY - SCAN_Y_RANGE);
         int yMax = Math.min(worldMaxY, topY + SCAN_Y_RANGE);
 
+        // Walk a cube around the player and update platforms/water accordingly
         for (int x = px - SCAN_RADIUS; x <= px + SCAN_RADIUS; x++) {
             for (int z = pz - SCAN_RADIUS; z <= pz + SCAN_RADIUS; z++) {
                 for (int y = yMax; y >= yMin; y--) {
@@ -86,6 +86,7 @@ public class farmlandwater {
                             }
                         }
                     } else {
+                        // Feature disabled: revert any platforms back to water
                         if (st.is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
                             level.setBlock(pos, Blocks.WATER.defaultBlockState(), 2);
                         }
@@ -100,6 +101,7 @@ public class farmlandwater {
         if (!(event.getLevel() instanceof Level level)) return;
         if (level.isClientSide) return;
 
+        // If farmland is broken, revert adjacent platforms that are no longer needed
         if (event.getState().getBlock() instanceof FarmBlock) {
             revertPlatformsAround(level, event.getPos());
         }
@@ -114,6 +116,7 @@ public class farmlandwater {
         BlockPos pos = event.getPos();
         BlockState placed = event.getPlacedBlock();
 
+        // Converting newly placed water into a platform if it borders farmland
         if ((level.getFluidState(pos).is(Fluids.WATER) || placed.getFluidState().is(Fluids.WATER))
                 && !level.getBlockState(pos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
             maybeConvertWaterToPlatform(level, pos);
@@ -131,6 +134,7 @@ public class farmlandwater {
 
         if (level.getBlockState(pos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) return;
 
+        // Same as above, but for “fluid updates” rather than entity placement
         if (level.getFluidState(pos).is(Fluids.WATER) || newState.getFluidState().is(Fluids.WATER)) {
             maybeConvertWaterToPlatform(level, pos);
         }
@@ -141,12 +145,14 @@ public class farmlandwater {
             BlockPos wpos = farmlandPos.relative(dir);
             if (level.getFluidState(wpos).is(Fluids.WATER)) {
                 if (!level.getBlockState(wpos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
+                    // Place a waterlogged platform on water next to farmland
                     BlockState platform = ModBlocks.WATER_SURFACE_PLATFORM.get()
                             .defaultBlockState()
                             .setValue(WaterSurfacePlatformBlock.WATERLOGGED, true);
                     level.setBlock(wpos, platform, 2);
                 }
             } else {
+                // Remove platform if the adjacent block is no longer water
                 if (level.getBlockState(wpos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
                     level.setBlock(wpos, Blocks.AIR.defaultBlockState(), 2);
                 }
@@ -157,6 +163,7 @@ public class farmlandwater {
     private static void revertPlatformsAround(Level level, BlockPos oldFarmland) {
         for (Direction dir : CARDINALS) {
             BlockPos pos = oldFarmland.relative(dir);
+            // Turn platform back into water if it no longer touches any farmland
             if (level.getBlockState(pos).is(ModBlocks.WATER_SURFACE_PLATFORM.get()) && !hasAdjacentFarmland(level, pos)) {
                 level.setBlock(pos, Blocks.WATER.defaultBlockState(), 2);
             }
@@ -164,6 +171,7 @@ public class farmlandwater {
     }
 
     private static void maybeConvertWaterToPlatform(Level level, BlockPos pos) {
+        // Convert a water block into a platform only if there is adjacent farmland
         if (!level.getFluidState(pos).is(Fluids.WATER)) return;
         if (!hasAdjacentFarmland(level, pos)) return;
 
@@ -181,6 +189,7 @@ public class farmlandwater {
     }
 
     private static boolean isFeatureEnabled(Level level) {
+        // Read the gamerule on the server; default to true if not registered yet
         try {
             if (level instanceof ServerLevel serverLevel) {
                 GameRules rules = serverLevel.getGameRules();
