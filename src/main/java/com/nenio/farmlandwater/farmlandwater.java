@@ -13,9 +13,10 @@ import net.minecraft.world.level.levelgen.Heightmap;
 
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.level.BlockEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.eventbus.api.bus.BusGroup;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
+import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 
 @Mod(farmlandwater.MOD_ID)
 public class farmlandwater {
@@ -33,24 +34,32 @@ public class farmlandwater {
     private static final int SCAN_Y_RANGE = 6;
     private static final int SCAN_EVERY_TICKS = 10;
 
-    public farmlandwater(net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext context) {
-        var modBus = context.getModEventBus();
+    public farmlandwater(FMLJavaModLoadingContext context) {
+        // New in Forge 1.21.6: use BusGroup instead of IEventBus for mod events
+        BusGroup modBus = context.getModBusGroup();
+
+        // DeferredRegister now registers against BusGroup
         ModBlocks.BLOCKS.register(modBus);
-        // Register GameRule during common setup
-        modBus.addListener(this::onCommonSetup);
-        // Subscribe this class to the main Forge event bus
-        net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(this);
+
+        // Mod lifecycle event: hook via the event's own bus + BusGroup
+        FMLCommonSetupEvent.getBus(modBus).addListener(this::onCommonSetup);
+
+        // Forge/game events: use the static BUS on each event class (no @SubscribeEvent)
+        TickEvent.PlayerTickEvent.BUS.addListener(this::onPlayerTick);
+        BlockEvent.BreakEvent.BUS.addListener(this::onFarmlandBreak);
+        BlockEvent.EntityPlaceEvent.BUS.addListener(this::onWaterPlacedByEntity);
+        BlockEvent.FluidPlaceBlockEvent.BUS.addListener(this::onFluidPlaced);
     }
 
     private void onCommonSetup(FMLCommonSetupEvent event) {
-        // Register the gamerule (default: true)
+        // Register the gamerule (default: true) on the main thread after parallel setup completes
         event.enqueueWork(() -> GR_FARMLAND_WATER = GameRules.register(
                 "FarmlandWater", GameRules.Category.PLAYER, GameRules.BooleanValue.create(true)
         ));
     }
 
-    @SubscribeEvent
-    public void onPlayerTick(TickEvent.PlayerTickEvent event) {
+    private void onPlayerTick(TickEvent.PlayerTickEvent event) {
+        // Phase check (END ≈ Post)
         if (event.phase != TickEvent.Phase.END) return;
 
         var player = event.player;
@@ -96,8 +105,7 @@ public class farmlandwater {
         }
     }
 
-    @SubscribeEvent
-    public void onFarmlandBreak(BlockEvent.BreakEvent event) {
+    private void onFarmlandBreak(BlockEvent.BreakEvent event) {
         if (!(event.getLevel() instanceof Level level)) return;
         if (level.isClientSide) return;
 
@@ -107,8 +115,7 @@ public class farmlandwater {
         }
     }
 
-    @SubscribeEvent
-    public void onWaterPlacedByEntity(BlockEvent.EntityPlaceEvent event) {
+    private void onWaterPlacedByEntity(BlockEvent.EntityPlaceEvent event) {
         if (!(event.getLevel() instanceof Level level)) return;
         if (level.isClientSide) return;
         if (!isFeatureEnabled(level)) return;
@@ -116,15 +123,14 @@ public class farmlandwater {
         BlockPos pos = event.getPos();
         BlockState placed = event.getPlacedBlock();
 
-        // Converting newly placed water into a platform if it borders farmland
+        // Convert newly placed water into a platform if it borders farmland
         if ((level.getFluidState(pos).is(Fluids.WATER) || placed.getFluidState().is(Fluids.WATER))
                 && !level.getBlockState(pos).is(ModBlocks.WATER_SURFACE_PLATFORM.get())) {
             maybeConvertWaterToPlatform(level, pos);
         }
     }
 
-    @SubscribeEvent
-    public void onFluidPlaced(BlockEvent.FluidPlaceBlockEvent event) {
+    private void onFluidPlaced(BlockEvent.FluidPlaceBlockEvent event) {
         if (!(event.getLevel() instanceof Level level)) return;
         if (level.isClientSide) return;
         if (!isFeatureEnabled(level)) return;
