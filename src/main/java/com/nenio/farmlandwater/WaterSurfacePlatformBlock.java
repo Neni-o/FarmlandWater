@@ -66,9 +66,6 @@ public class WaterSurfacePlatformBlock extends Block implements Waterloggable, F
     @Override
     public VoxelShape getOutlineShape(BlockState s, BlockView l, BlockPos p, ShapeContext c) { return VoxelShapes.empty(); }
 
-    @Override
-    public VoxelShape getCullingShape(BlockState s, BlockView l, BlockPos p) { return VoxelShapes.empty(); }
-
     // Keep actual water in this cell while waterlogged
     @Override
     public FluidState getFluidState(BlockState state) {

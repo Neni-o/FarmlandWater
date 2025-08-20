@@ -21,7 +21,6 @@ import net.minecraft.world.World;
 public class farmlandwater implements ModInitializer {
     public static final String MOD_ID = "farmlandwater";
 
-    // GameRule
     public static GameRules.Key<GameRules.BooleanRule> GR_FARMLAND_WATER;
 
     private static final Direction[] CARDINALS = new Direction[]{
@@ -44,9 +43,7 @@ public class farmlandwater implements ModInitializer {
 
         ServerTickEvents.END_WORLD_TICK.register(world -> {
             if (world.getTime() % SCAN_EVERY_TICKS != 0) return;
-            world.getPlayers().forEach(p ->
-                    scanAroundPlayer(world, p.getBlockX(), p.getBlockZ())
-            );
+            world.getPlayers().forEach(p -> scanAroundPlayer(world, p.getBlockX(), p.getBlockZ()));
         });
 
         PlayerBlockBreakEvents.AFTER.register((world, player, pos, state, be) -> {
@@ -55,7 +52,6 @@ public class farmlandwater implements ModInitializer {
             }
         });
     }
-
 
     private static void scanAroundPlayer(ServerWorld world, int px, int pz) {
         final boolean enabled = isFeatureEnabled(world);
@@ -136,6 +132,9 @@ public class farmlandwater implements ModInitializer {
     }
 
     private static boolean isFeatureEnabled(World world) {
-        return world.getGameRules().getBoolean(GR_FARMLAND_WATER);
+        if (world instanceof ServerWorld sw) {
+            return sw.getGameRules().getBoolean(GR_FARMLAND_WATER);
+        }
+        return true;
     }
 }
