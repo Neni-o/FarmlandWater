@@ -1,36 +1,31 @@
 package com.nenio.farmlandwater;
 
-import net.minecraft.core.registries.Registries;
-import net.minecraft.resources.ResourceKey;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockBehaviour;
-import net.minecraftforge.registries.DeferredRegister;
-import net.minecraftforge.registries.ForgeRegistries;
-import net.minecraftforge.registries.RegistryObject;
+import net.fabricmc.fabric.api.object.builder.v1.block.FabricBlockSettings;
+import net.minecraft.block.Blocks;
+import net.minecraft.registry.Registries;
+import net.minecraft.registry.Registry;
+import net.minecraft.util.Identifier;
 
 public final class ModBlocks {
-    public static final DeferredRegister<Block> BLOCKS =
-            DeferredRegister.create(ForgeRegistries.BLOCKS, farmlandwater.MOD_ID);
 
-    public static final RegistryObject<WaterSurfacePlatformBlock> WATER_SURFACE_PLATFORM =
-            BLOCKS.register("water_surface_platform",
-                    () -> new WaterSurfacePlatformBlock(
-                            BlockBehaviour.Properties.ofFullCopy(Blocks.WATER)
-                                    .noCollission()
-                                    .noOcclusion()
-                                    .replaceable()
-                                    .strength(-1.0F, 3_600_000F)
-                                    .isValidSpawn((s, l, p, e) -> false)
-                                    .noLootTable()
-                                    .setId(ResourceKey.create(
-                                            Registries.BLOCK,
-                                            ResourceLocation.fromNamespaceAndPath(
-                                                    farmlandwater.MOD_ID, "water_surface_platform")
-                                    ))
-                    )
+    public static final WaterSurfacePlatformBlock WATER_SURFACE_PLATFORM =
+            new WaterSurfacePlatformBlock(
+                    FabricBlockSettings.copyOf(Blocks.WATER)
+                            .noCollision()
+                            .nonOpaque()
+                            .replaceable()
+                            .strength(-1.0F, 3_600_000F)
+                            .allowsSpawning((s, w, p, t) -> false)
+                            .dropsNothing()
             );
+
+    public static void register() {
+        Registry.register(Registries.BLOCK, id("water_surface_platform"), WATER_SURFACE_PLATFORM);
+    }
+
+    private static Identifier id(String path) {
+        return Identifier.of(farmlandwater.MOD_ID, path);
+    }
 
     private ModBlocks() {}
 }
